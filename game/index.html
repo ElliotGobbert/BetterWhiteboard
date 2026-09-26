@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Pictionary</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #1e1e1e; color: white; padding-top: 50px; }
+        h1 { font-size: 3rem; color: #4ade80; }
+        #guess { font-size: 5rem; font-weight: bold; margin: 20px 0; }
+        #confidence { font-size: 1.5rem; color: #9ca3af; }
+    </style>
+</head>
+<body>
+    <h1>I think you are drawing...</h1>
+    <div id="guess">Waiting...</div>
+    <div id="confidence">Confidence: 0%</div>
+
+    <script>
+        // Poll the server every 1 second to update the UI
+        // (In a full production app, you'd use WebSockets, but polling is perfectly fine for this prototype)
+        async function fetchPrediction() {
+            try {
+                const response = await fetch('/latest_guess'); // We will add this route if we push state from the server
+                // For this architecture, we'll actually have the main.py trigger the guess.
+            } catch (e) {}
+        }
+    </script>
+</body>
+</html>

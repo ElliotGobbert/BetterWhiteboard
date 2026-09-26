@@ -1,7 +1,24 @@
 import cv2
+import time
+import threading
+import requests
 from camera_tracker import HandTracker
 from gesture_recognizer import is_hand_closed, count_extended_fingers
 from canvas_renderer import CanvasRenderer
+
+def send_canvas_to_model(canvas):
+    """Sends the canvas to the FastAPI server in the background."""
+    _, encoded_image = cv2.imencode('.jpg', canvas)
+    try:
+        response = requests.post(
+            "http://localhost:8000/predict", 
+            files={"file": ("canvas.jpg", encoded_image.tobytes(), "image/jpeg")}
+        )
+        if response.status_code == 200:
+            data = response.json()
+            print(f"[AI Guess] {data['guess']} (Confidence: {data['confidence']}%)")
+    except requests.exceptions.RequestException:
+        pass  # Server might not be running yet
 
 def main():
     cap = cv2.VideoCapture(0) # Change to 1 if hitting Continuity Camera bug on Mac
@@ -13,6 +30,7 @@ def main():
 
     prev_pos = None
     left_prev_x = None  # Tracks the left wrist position for swipe velocity
+    last_predict_time = time.time()
     
     print("[INFO] Modular Whiteboard active.")
 
@@ -85,6 +103,17 @@ def main():
         else:
             prev_pos = None
             left_prev_x = None
+
+        # AI Prediction Logic (Triggers every 2.5 seconds)
+        current_time = time.time()
+        if current_time - last_predict_time > 2.5:
+            # Convert to grayscale to check if the canvas is completely empty before predicting
+            gray_canvas = cv2.cvtColor(renderer.canvas, cv2.COLOR_BGR2GRAY)
+            if cv2.countNonZero(gray_canvas) > 0:
+                canvas_copy = renderer.canvas.copy()
+                # Use daemon=True so threads close automatically if you exit the program
+                threading.Thread(target=send_canvas_to_model, args=(canvas_copy,), daemon=True).start()
+            last_predict_time = current_time
 
         frame = renderer.blend_and_overlay(frame, drawing_active, current_pos)
         cv2.imshow("Jetson AI Whiteboard", frame)
