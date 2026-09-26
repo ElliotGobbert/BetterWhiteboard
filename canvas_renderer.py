@@ -17,19 +17,24 @@ class CanvasRenderer:
 
     def blend_and_overlay(self, frame, drawing_active, current_pos):
         """Blends the drawing canvas with the live frame and adds UI overlays."""
-        gray_canvas = cv2.cvtColor(self.canvas, cv2.COLOR_BGR2GRAY)
-        _, inv_canvas = cv2.threshold(gray_canvas, 20, 255, cv2.THRESH_BINARY_INV)
-        inv_canvas = cv2.cvtColor(inv_canvas, cv2.COLOR_GRAY2BGR)
+        overlay_alpha = 0.7
 
-        frame = cv2.bitwise_and(frame, inv_canvas)
-        frame = cv2.bitwise_or(frame, self.canvas)
+        # Keep the camera visible while making the drawing semi-transparent.
+        # Black pixels in the canvas are treated as fully transparent so they don't
+        # obscure the live image, while colored strokes are blended in softly.
+        mask = cv2.cvtColor(self.canvas, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(mask, 10, 255, cv2.THRESH_BINARY)
+        overlay = self.canvas.copy()
+        overlay[mask == 0] = [0, 0, 0]
+
+        frame = cv2.addWeighted(frame, 1.0 - overlay_alpha, overlay, overlay_alpha, 0)
 
         # Visual indicator for fingertip
         if current_pos:
             if drawing_active == "DRAW":
                 pointer_color = (0, 255, 0)  # Green
             elif drawing_active == "ERASE":
-                pointer_color = (0, 0, 255)  # Red 
+                pointer_color = (0, 0, 255)  # Red
             else:
                 pointer_color = (255, 0, 0)  # Blue
             cv2.circle(frame, current_pos, 12, pointer_color, -1)
