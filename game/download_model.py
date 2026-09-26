@@ -1,17 +1,24 @@
-from huggingface_hub import hf_hub_download
 import os
+from huggingface_hub import hf_hub_download
 
-def download_quickdraw_model():
-    print("Downloading pre-trained QuickDraw model...")
-    # Downloading a common lightweight QuickDraw ONNX model format
-    # Note: Replace 'example-repo' with a specific QuickDraw ONNX repo if you decide to use a specific architecture like MobileNet.
-    model_path = hf_hub_download(
-        repo_id="nateraw/quickdraw-model", 
-        filename="keras_metadata.pb", # Adjust filename based on the exact model format you choose to infer with (e.g., .onnx or .h5)
+def download():
+    print("[INFO] Downloading pre-trained QuickDraw ONNX model and label config...")
+    os.makedirs("game/models", exist_ok=True)
+    
+    # Download quantized ONNX weights (~6 MB, optimized for Jetson/CPU)
+    hf_hub_download(
+        repo_id="Xenova/quickdraw-mobilevit-small",
+        filename="onnx/model_quantized.onnx",
         local_dir="game/models"
     )
-    print(f"Model downloaded successfully to: {model_path}")
+    
+    # Download 345-class label mapping
+    hf_hub_download(
+        repo_id="Xenova/quickdraw-mobilevit-small",
+        filename="config.json",
+        local_dir="game/models"
+    )
+    print("[SUCCESS] Download complete! Model saved in game/models/")
 
 if __name__ == "__main__":
-    os.makedirs("game/models", exist_ok=True)
-    download_quickdraw_model()
+    download()

@@ -5,26 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Pictionary</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #1e1e1e; color: white; padding-top: 50px; }
-        h1 { font-size: 3rem; color: #4ade80; }
-        #guess { font-size: 5rem; font-weight: bold; margin: 20px 0; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background-color: #1e1e1e; color: white; padding-top: 20px; }
+        h1 { font-size: 2.5rem; color: #4ade80; margin-bottom: 10px; }
+        #video-container { margin: 0 auto 20px auto; width: 800px; height: 450px; background-color: #000; border: 4px solid #333; border-radius: 10px; overflow: hidden; }
+        img { width: 100%; height: 100%; object-fit: cover; }
+        #guess { font-size: 4rem; font-weight: bold; margin: 10px 0; text-transform: uppercase; }
         #confidence { font-size: 1.5rem; color: #9ca3af; }
     </style>
 </head>
 <body>
-    <h1>I think you are drawing...</h1>
+    <h1>Draw on the screen!</h1>
+    
+    <div id="video-container">
+        <!-- This img tag natively handles MJPEG streams -->
+        <img src="/video_feed" alt="Live Camera Feed">
+    </div>
+
+    <div>I think you are drawing a...</div>
     <div id="guess">Waiting...</div>
     <div id="confidence">Confidence: 0%</div>
 
     <script>
-        // Poll the server every 1 second to update the UI
-        // (In a full production app, you'd use WebSockets, but polling is perfectly fine for this prototype)
-        async function fetchPrediction() {
+        // Poll the server every 1 second to update the text
+        setInterval(async () => {
             try {
-                const response = await fetch('/latest_guess'); // We will add this route if we push state from the server
-                // For this architecture, we'll actually have the main.py trigger the guess.
-            } catch (e) {}
-        }
+                const response = await fetch('/latest_guess');
+                const data = await response.json();
+                document.getElementById('guess').innerText = data.guess;
+                document.getElementById('confidence').innerText = `Confidence: ${data.confidence}%`;
+            } catch (e) {
+                console.error("Server disconnected");
+            }
+        }, 1000);
     </script>
 </body>
 </html>
