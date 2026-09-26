@@ -1,0 +1,636 @@
+ We are developing a computer vision project for a hackathon. We have a small prototype called BetterWhiteboard which tracks a person's hand and draws, intended to create a pictionary-style game.
+
+
+This is thye current prototype for our project. Our end goal is to have an interactive wipeboard - if you will. i.e you can "swipe" with your hand to get a fresh page, put a fist-into-X finger to change marker colors, etc etc. Maybe even something more ambitious like auto-detecting letters and correcting them into real text. That is our end goal for this hackahton - and for now, we're looking to really "start" this project - we need to find a way to split this up modularly and then delegate the work to each of us so that we can really start working on it. Let me know what you think, and how to do this - help us get started on thsi project and start working in parralel. oh btw, this model is running on a jetson orin nano, with a webcam and monitor attached to it - just to add to the interesting-ness factor
+
+
+cat whiteboard.py 
+
+import cv2
+
+import mediapipe as mp
+
+import numpy as np
+
+from gestures import is_hand_closed
+
+
+# Initialize MediaPipe Hands
+
+mp_hands = mp.solutions.hands
+
+hands = mp_hands.Hands(
+
+    max_num_hands=1, min_detection_confidence=0.8, min_tracking_confidence=0.5
+
+)
+
+
+# Initialize Camera
+
+cap = cv2.VideoCapture(0)
+
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+
+canvas = None
+
+prev_x, prev_y = 0, 0
+
+
+# Drawing settings
+
+draw_color = (0, 255, 0)  # Green brush (BGR)
+
+brush_thickness = 8
+
+
+print(
+
+    "[INFO] Whiteboard active. Close your hand into a fist to DRAW. Open your"
+
+    " hand to PAUSE."
+
+)
+
+
+while cap.isOpened():
+
+  success, frame = cap.read()
+
+  if not success:
+
+    print("Ignoring empty camera frame.")
+
+    continue
+
+
+  frame = cv2.flip(frame, 1)
+
+  h, w, c = frame.shape
+
+
+  if canvas is None:
+
+    canvas = np.zeros((h, w, 3), dtype=np.uint8)
+
+
+  rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+  results = hands.process(rgb_frame)
+
+
+  drawing_active = False
+
+
+  if results.multi_hand_landmarks:
+
+    for hand_landmarks in results.multi_hand_landmarks:
+
+      # Get index fingertip coordinates (Landmark 8)
+
+      x = int(hand_landmarks.landmark[8].x * w)
+
+      y = int(hand_landmarks.landmark[8].y * h)
+
+
+      # Check gesture state using our modular file
+
+      hand_is_closed = is_hand_closed(hand_landmarks)
+
+
+      if hand_is_closed:
+
+        drawing_active = True
+
+        if prev_x == 0 and prev_y == 0:
+
+          prev_x, prev_y = x, y
+
+
+        # Draw line on canvas
+
+        cv2.line(canvas, (prev_x, prev_y), (x, y), draw_color, brush_thickness)
+
+        prev_x, prev_y = x, y
+
+
+        # Visual indicator for drawing mode (Red circle)
+
+        cv2.circle(frame, (x, y), 12, (0, 0, 255), -1)
+
+      else:
+
+        # Paused (hand open) - reset tracking points so lines don't connect across gaps
+
+        prev_x, prev_y = 0, 0
+
+        # Visual indicator for paused mode (Blue circle)
+
+        cv2.circle(frame, (x, y), 12, (255, 0, 0), -1)
+
+  else:
+
+    prev_x, prev_y = 0, 0
+
+
+  # Blend drawing canvas with live frame
+
+  gray_canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
+
+  _, inv_canvas = cv2.threshold(gray_canvas, 20, 255, cv2.THRESH_BINARY_INV)
+
+  inv_canvas = cv2.cvtColor(inv_canvas, cv2.COLOR_GRAY2BGR)
+
+
+  frame = cv2.bitwise_and(frame, inv_canvas)
+
+  frame = cv2.bitwise_or(frame, canvas)
+
+
+  # Status overlay text
+
+  status_text = "STATUS: DRAWING (Fist)" if drawing_active else "STATUS: PAUSED (Open Hand)"
+
+  status_color = (0, 255, 0) if drawing_active else (255, 0, 0)
+
+
+  cv2.putText(
+
+      frame,
+
+      status_text,
+
+      (20, 40),
+
+      cv2.FONT_HERSHEY_SIMPLEX,
+
+      0.7,
+
+      status_color,
+
+      2,
+
+  )
+
+  cv2.putText(
+
+      frame,
+
+      "Controls: [C] Clear | [ESC] Exit",
+
+      (20, 80),
+
+      cv2.FONT_HERSHEY_SIMPLEX,
+
+      0.6,
+
+      (255, 255, 255),
+
+      2,
+
+  )
+
+
+  cv2.imshow("Jetson AI Whiteboard", frame)
+
+
+  key = cv2.waitKey(1) & 0xFF
+
+  if key == 27:
+
+    break
+
+  elif key == ord("c") or key == ord("C"):
+
+    canvas = np.zeros((h, w, 3), dtype=np.uint8)
+
+    print("[INFO] Canvas cleared!")
+
+
+cap.release()
+
+cv2.destroyAllWindows()
+
+----
+
+
+import math
+
+
+
+def is_hand_closed(hand_landmarks):
+
+  """Returns True if the hand is closed (fist), False if open."""
+
+  wrist = hand_landmarks.landmark[0]
+
+
+  # Fingertip indices: Index (8), Middle (12), Ring (16), Pinky (20)
+
+  tip_indices = [8, 12, 16, 20]
+
+  # Corresponding base/MCP joint indices: Index (5), Middle (9), Ring (13), Pinky (17)
+
+  mcp_indices = [5, 9, 13, 17]
+
+
+  folded_fingers = 0
+
+  for tip_idx, mcp_idx in zip(tip_indices, mcp_indices):
+
+    tip = hand_landmarks.landmark[tip_idx]
+
+    mcp = hand_landmarks.landmark[mcp_idx]
+
+
+    # Distance from wrist to tip vs wrist to MCP joint
+
+    dist_tip_wrist = math.hypot(tip.x - wrist.x, tip.y - wrist.y)
+
+    dist_mcp_wrist = math.hypot(mcp.x - wrist.x, mcp.y - wrist.y)
+
+
+    # If the fingertip is closer or nearly equal to the wrist distance compared to MCP, it's folded
+
+    if dist_tip_wrist < dist_mcp_wrist * 1.15:
+
+      folded_fingers += 1
+
+
+  # Consider the hand closed if at least 3 fingers are folded
+
+  return folded_fingers >= 3
+
+Building a gesture-controlled app on a Jetson Orin Nano is a perfect hackathon project. The current code is a solid proof-of-concept, but because everything (camera capture, AI inference, rendering, and state logic) is stuffed into a single while loop, you will step on each other's toes if you try to build on it simultaneously.
+
+To work in parallel, you need to decouple the system into standalone classes or modules with strict inputs and outputs.
+Architectural Breakdown
+
+Split your single whiteboard.py script into four distinct modules. This allows everyone to test their code independently before plugging it into the main loop.
+
+    camera_tracker.py (Vision Engine): Handles OpenCV video capture and MediaPipe processing.
+
+        Input: None (reads from camera).
+
+        Output: Raw frame, extracted hand_landmarks, and fingertip coordinates.
+
+    gesture_recognizer.py (Logic/Math Engine): Expands on your current is_hand_closed function.
+
+        Input: hand_landmarks and historical coordinate data.
+
+        Output: High-level strings/events ("SWIPE_LEFT", "FIST", "PEACE_SIGN", "OPEN_HAND").
+
+    canvas_renderer.py (Graphics Engine): Manages the numpy arrays, blending, and drawing logic.
+
+        Input: Commands (draw_line(x1, y1, x2, y2, color), clear(), show_ui(status)).
+
+        Output: The final frame ready for cv2.imshow.
+
+    main.py (The State Machine): The only file that imports everything. It acts as the traffic cop, taking gestures from module 2 and sending drawing commands to module 3 based on the current state (e.g., Drawing Mode vs. Color Menu Mode).
+
+Team Delegation & Parallel Work
+
+Assuming a team of 3-4 people, here is how you can divide the work right now so nobody is blocked.
+Role	Focus Area	Immediate Tasks (Next 2 Hours)
+The Gesture Hacker	gesture_recognizer.py	Build count_fingers(landmarks) for color switching (e.g., 2 fingers = Blue). Build detect_swipe(landmark_history) by tracking wrist velocity over 10 frames to clear the board.
+The UI & Canvas Guru	canvas_renderer.py	Wrap the np.zeros canvas into a Python class. Create methods to draw lines, draw a color palette overlay, and handle the bitwise blending.
+The Systems Architect	main.py & Optimization	Rewrite the while loop to instantiate the new classes. Implement a State Machine (DRAWING, COLOR_PICKING, IDLE). Jetson Specific: Move the camera capture to a separate background thread so frame blocking doesn't lag the drawing.
+The OCR/ML Specialist	ocr_pipeline.py (Stretch)	Do not touch the main loop. Write a standalone script that takes a static image (a saved canvas), passes it to an OCR library (like Tesseract or a lightweight TensorRT model), and prints the text.
+Next Steps for Collaboration
+
+    Agree on the "Interfaces" first: Before writing logic, agree on what data passes between files. For example, the UI guru needs to know that the Gesture Hacker is going to return the string "SWIPE_LEFT" so they can hook that up to the canvas.clear() method.
+
+    Mock the data: The UI Guru doesn't need to wait for MediaPipe to work. They can write a dummy script that fakes hand coordinates using the mouse to build the drawing and color-changing UI immediately.
+
+    Thread the camera: MediaPipe running synchronously inside the cv2.VideoCapture loop will cap your frame rate. Have the Systems Architect look into the imutils.video.WebcamVideoStream pattern to put the camera on its own thread—this is critical for smooth drawing on the Jetson.
+
+Want an example of how to thread the Jetson camera?
+Yes
+
+This sounds good - split up this prototype code into the 4 "modular" pieces - give me the code, and then give me the commands to set up/push this to the new git repo
+
+Here are the four modular files ready to be pasted into your project, followed by the Git commands to initialize the repository and push your code.
+1. camera_tracker.py
+
+This handles MediaPipe initialization and frame processing, completely isolating the computer vision pipeline from the app logic.
+Python
+
+import cv2
+import mediapipe as mp
+
+class HandTracker:
+    def __init__(self, max_hands=1, min_detect_conf=0.8, min_track_conf=0.5):
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(
+            max_num_hands=max_hands,
+            min_detection_confidence=min_detect_conf,
+            min_tracking_confidence=min_track_conf
+        )
+
+    def process_frame(self, frame):
+        """Converts frame to RGB and processes it through MediaPipe."""
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(rgb_frame)
+        return results
+
+2. gesture_recognizer.py
+
+This remains a pure logic file. As you add more gestures (like swiping or peace signs), they will all live here.
+Python
+
+import math
+
+def is_hand_closed(hand_landmarks):
+    """Returns True if the hand is closed (fist), False if open."""
+    wrist = hand_landmarks.landmark[0]
+
+    # Fingertip indices: Index (8), Middle (12), Ring (16), Pinky (20)
+    tip_indices = [8, 12, 16, 20]
+    # Corresponding base/MCP joint indices: Index (5), Middle (9), Ring (13), Pinky (17)
+    mcp_indices = [5, 9, 13, 17]
+
+    folded_fingers = 0
+    for tip_idx, mcp_idx in zip(tip_indices, mcp_indices):
+        tip = hand_landmarks.landmark[tip_idx]
+        mcp = hand_landmarks.landmark[mcp_idx]
+
+        # Distance from wrist to tip vs wrist to MCP joint
+        dist_tip_wrist = math.hypot(tip.x - wrist.x, tip.y - wrist.y)
+        dist_mcp_wrist = math.hypot(mcp.x - wrist.x, mcp.y - wrist.y)
+
+        # If the fingertip is closer or nearly equal to the wrist distance compared to MCP, it's folded
+        if dist_tip_wrist < dist_mcp_wrist * 1.15:
+            folded_fingers += 1
+
+    # Consider the hand closed if at least 3 fingers are folded
+    return folded_fingers >= 3
+
+3. canvas_renderer.py
+
+This encapsulates all OpenCV drawing, masking, and UI text, keeping the messy bitwise operations out of your main loop.
+Python
+
+import cv2
+import numpy as np
+
+class CanvasRenderer:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.canvas = np.zeros((height, width, 3), dtype=np.uint8)
+
+    def draw_line(self, start_pos, end_pos, color, thickness):
+        """Draws a line on the persistent canvas."""
+        cv2.line(self.canvas, start_pos, end_pos, color, thickness)
+
+    def clear(self):
+        """Resets the canvas to a blank black screen."""
+        self.canvas = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
+    def blend_and_overlay(self, frame, drawing_active, current_pos):
+        """Blends the drawing canvas with the live frame and adds UI overlays."""
+        # Blend drawing canvas with live frame
+        gray_canvas = cv2.cvtColor(self.canvas, cv2.COLOR_BGR2GRAY)
+        _, inv_canvas = cv2.threshold(gray_canvas, 20, 255, cv2.THRESH_BINARY_INV)
+        inv_canvas = cv2.cvtColor(inv_canvas, cv2.COLOR_GRAY2BGR)
+
+        frame = cv2.bitwise_and(frame, inv_canvas)
+        frame = cv2.bitwise_or(frame, self.canvas)
+
+        # Visual indicator for fingertip
+        if current_pos:
+            pointer_color = (0, 0, 255) if drawing_active else (255, 0, 0)
+            cv2.circle(frame, current_pos, 12, pointer_color, -1)
+
+        # Status overlay text
+        status_text = "STATUS: DRAWING (Fist)" if drawing_active else "STATUS: PAUSED (Open Hand)"
+        status_color = (0, 255, 0) if drawing_active else (255, 0, 0)
+
+        cv2.putText(frame, status_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
+        cv2.putText(frame, "Controls: [C] Clear | [ESC] Exit", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        return frame
+
+4. main.py
+
+The orchestrator. It sets up the camera, passes data between the modules, and maintains the current drawing state.
+Python
+
+import cv2
+from camera_tracker import HandTracker
+from gesture_recognizer import is_hand_closed
+from canvas_renderer import CanvasRenderer
+
+def main():
+    # Initialize Camera
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+    # Initialize Modules
+    tracker = HandTracker()
+    renderer = CanvasRenderer(1280, 720)
+
+    # State variables
+    prev_pos = None
+    draw_color = (0, 255, 0)  # Green brush (BGR)
+    brush_thickness = 8
+
+    print("[INFO] Modular Whiteboard active. Close hand to DRAW. Open hand to PAUSE.")
+
+    while cap.isOpened():
+        success, frame = cap.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            continue
+
+        frame = cv2.flip(frame, 1)
+        h, w, _ = frame.shape
+        
+        # 1. Process Vision
+        results = tracker.process_frame(frame)
+
+        drawing_active = False
+        current_pos = None
+
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Get index fingertip coordinates
+                x = int(hand_landmarks.landmark[8].x * w)
+                y = int(hand_landmarks.landmark[8].y * h)
+                current_pos = (x, y)
+
+                # 2. Check Gestures
+                if is_hand_closed(hand_landmarks):
+                    drawing_active = True
+                    if prev_pos is None:
+                        prev_pos = current_pos
+
+                    # 3. Update State & Draw
+                    renderer.draw_line(prev_pos, current_pos, draw_color, brush_thickness)
+                    prev_pos = current_pos
+                else:
+                    prev_pos = None  # Reset tracking so lines don't connect across gaps
+        else:
+            prev_pos = None
+
+        # 4. Render Final Output
+        frame = renderer.blend_and_overlay(frame, drawing_active, current_pos)
+        cv2.imshow("Jetson AI Whiteboard", frame)
+
+        # Handle Keyboard Input
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:
+            break
+        elif key in [ord("c"), ord("C")]:
+            renderer.clear()
+            print("[INFO] Canvas cleared!")
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
+
+Git Setup & Push Commands
+
+Assuming you are in the terminal on your Jetson (or your local development machine), navigate to the directory where you saved these four files.
+
+Run these commands sequentially. Replace <YOUR_REPO_URL> with the actual HTTPS or SSH link from GitHub/GitLab (e.g., [https://github.com/YourUsername/BetterWhiteboard.git](https://github.com/YourUsername/BetterWhiteboard.git)).
+Bash
+
+# 1. Initialize the repository
+git init
+
+# 2. Stage all four files
+git add .
+
+# 3. Commit the baseline code
+git commit -m "Initial commit: Modularized gesture drawing prototype"
+
+# 4. Rename the default branch to 'main' (if not already)
+git branch -M main
+
+# 5. Link to your remote GitHub/GitLab repository
+git remote add origin <YOUR_REPO_URL>
+
+# 6. Push the code to the remote repository
+git push -u origin main
+
+Need help setting up a .gitignore?
+Yes
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git init
+
+hint: Using 'master' as the name for the initial branch. This default branch name
+
+hint: is subject to change. To configure the initial branch name to use in all
+
+hint: of your new repositories, which will suppress this warning, call:
+
+hint: 
+
+hint:     git config --global init.defaultBranch <name>
+
+hint: 
+
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+
+hint: 'development'. The just-created branch can be renamed via this command:
+
+hint: 
+
+hint:     git branch -m <name>
+
+Initialized empty Git repository in /home/luisvalerio/BetterWhiteboard/.git/
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git branhc
+
+git: 'branhc' is not a git command. See 'git --help'.
+
+
+The most similar command is
+
+    branch
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git branhc
+
+git: 'branhc' is not a git command. See 'git --help'.
+
+
+The most similar command is
+
+    branch
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git branch
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git branch
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git add .
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git commit -m "Initial modular files"
+
+Author identity unknown
+
+
+*** Please tell me who you are.
+
+
+Run
+
+
+  git config --global user.email "you@example.com"
+
+  git config --global user.name "Your Name"
+
+
+to set your account's default identity.
+
+Omit --global to set the identity only in this repository.
+
+
+fatal: unable to auto-detect email address (got 'luisvalerio@luisvalerio.(none)')
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git branch -M main
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git@github.com:ElliotGobbert/BetterWhiteboard.git^C
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git remote add origin git@github.com:ElliotGobbert/BetterWhiteboard.git~
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git puch -u origin main
+
+git: 'puch' is not a git command. See 'git --help'.
+
+
+The most similar command is
+
+    push
+
+(env) luisvalerio@luisvalerio:~/BetterWhiteboard$ git push -u origin main
+
+error: src refspec main does not match any
+
+error: failed to push some refs to 'github.com:ElliotGobbert/BetterWhiteboard.git~'
+
+The push failed for two small reasons: first, your commit didn't actually save because Git needs your name and email configured. Because the commit failed, there was no main branch to push yet. Second, a stray tilde (~) snuck onto the end of your remote URL when you pasted it.
+
+Run these exact commands one by one to fix the configuration, make the commit, fix the URL, and push:
+Bash
+
+# 1. Tell Git who you are (use the email associated with your GitHub)
+git config --global user.email "your_email@example.com"
+git config --global user.name "Luis Valerio"
+
+# 2. Make the commit (this will work now)
+git commit -m "Initial modular files"
+
+# 3. Fix the remote URL (removes the accidental ~ at the end)
+git remote set-url origin git@github.com:ElliotGobbert/BetterWhiteboard.git
+
+# 4. Push to GitHub
+git push -u origin main
+
+Once that goes through, your team can git clone git@github.com:ElliotGobbert/BetterWhiteboard.git and start working in parallel!
