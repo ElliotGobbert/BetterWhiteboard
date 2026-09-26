@@ -4,15 +4,19 @@ from gesture_recognizer import is_hand_closed, count_extended_fingers
 from canvas_renderer import CanvasRenderer
 
 def main():
-    cap = cv2.VideoCapture(0) # Change to 1 if hitting Continuity Camera bug on Mac
+    # Select the default camera. A different index may be needed if another
+    # camera (such as Continuity Camera) is selected by the operating system.
+    cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     tracker = HandTracker(max_hands=2)
     renderer = CanvasRenderer(1280, 720)
 
+    # These persist across frames so drawing is continuous and swipes can be
+    # measured as a frame-to-frame wrist displacement.
     prev_pos = None
-    left_prev_x = None  # Tracks the left wrist position for swipe velocity
+    left_prev_x = None
     
     print("[INFO] Modular Whiteboard active.")
 
@@ -21,6 +25,7 @@ def main():
         if not success:
             continue
 
+        # Mirror the preview so it behaves like looking into a mirror.
         frame = cv2.flip(frame, 1)
         h, w, _ = frame.shape
         
@@ -30,15 +35,17 @@ def main():
         current_pos = None
 
         if results.multi_hand_landmarks and results.multi_handedness:
-            # zip pairs each hand's physical coordinates with its Left/Right classification
+            # Pair each set of landmarks with MediaPipe's left/right label.
             for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
                 
-                # Note: Because cv2.flip mirrors the image, MediaPipe's "Left" label usually aligns with your physical right hand.
-                # If the hands feel backwards when you test it, just swap "Right" and "Left" in these statements.
+                # Mirroring reverses the apparent side of a hand in the preview.
+                # Swap these labels if the controls feel reversed on this camera.
                 hand_label = handedness.classification[0].label 
 
-                # 1. RIGHT HAND: Drawing and Erasing
+                # The index fingertip is the cursor for drawing and erasing.
                 if hand_label == "Right":
+                    # MediaPipe landmarks are normalized (0-1); OpenCV drawing
+                    # functions require pixel coordinates.
                     x = int(hand_landmarks.landmark[8].x * w)
                     y = int(hand_landmarks.landmark[8].y * h)
                     current_pos = (x, y)
@@ -56,33 +63,37 @@ def main():
                         prev_pos = None
 
                     if drawing_active:
+                        # Start a new stroke at the first active position, then
+                        # connect later positions to create a continuous line.
                         if prev_pos is None: 
                             prev_pos = current_pos
                         renderer.draw_line(prev_pos, current_pos, color, thick)
                         prev_pos = current_pos
                         
-                # 2. LEFT HAND: Swiping to Clear
+                # An open opposite hand acts as a horizontal clear gesture.
                 elif hand_label == "Left":
                     fingers_up = count_extended_fingers(hand_landmarks)
                     wrist_x = int(hand_landmarks.landmark[0].x * w)
                     
-                    # If hand is open (4+ fingers)
+                    # Require an open hand to avoid clearing while repositioning.
                     if fingers_up >= 4:
                         if left_prev_x is not None:
-                            # Calculate horizontal velocity (pixels moved between frames)
+                            # Approximate horizontal velocity from consecutive frames.
                             velocity = wrist_x - left_prev_x
                             
-                            # If wrist moved more than 80 pixels in a single frame, trigger clear
+                            # A large one-frame movement is treated as a swipe.
                             if abs(velocity) > 80:
                                 renderer.clear()
                                 print("[INFO] Swipe detected! Canvas cleared.")
-                                left_prev_x = None  # Reset to avoid triggering 50 times during one swipe
+                                # Reset so one swipe cannot clear repeatedly.
+                                left_prev_x = None
                                 continue
                                 
                         left_prev_x = wrist_x
                     else:
                         left_prev_x = None
         else:
+            # Do not connect a future detected hand to a stale cursor position.
             prev_pos = None
             left_prev_x = None
 
